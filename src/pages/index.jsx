@@ -26,6 +26,9 @@ export default function Onboarding() {
     transcriptFile: null,
     qualificationsFile: null,
   });
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
   const [uploadProgress, setUploadProgress] = useState({
     cv: 0,
     transcript: 0,
@@ -64,14 +67,39 @@ export default function Onboarding() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    // clear previous errors
+    setFormError("");
+
     if (currentStep < steps.length) {
       setCurrentStep(currentStep + 1);
-    } else {
-      // Simulate API call and redirect to dashboard
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 1000);
+      return;
     }
+
+    // Final step: validate email and passwords before completing setup
+    if (!formData.email) {
+      setFormError("Please provide an email address.");
+      return;
+    }
+
+    if (!password) {
+      setFormError("Please choose a password for your account.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setFormError("Password should be at least 6 characters.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+
+    // Simulate API call to create account and redirect to dashboard
+    setTimeout(() => {
+      router.push("/dashboard");
+    }, 1000);
   };
 
   const renderStepContent = () => {
@@ -241,43 +269,71 @@ export default function Onboarding() {
             </div>
 
             <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h4 className="font-medium text-gray-900 mb-4">
-                Profile Summary
-              </h4>
+              <h4 className="font-medium text-gray-900 mb-4">Profile Summary</h4>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">
-                    Full Name
-                  </dt>
+                  <dt className="text-sm font-medium text-gray-500">Full Name</dt>
                   <dd className="text-sm text-gray-900">{formData.fullName}</dd>
                 </div>
                 <div>
                   <dt className="text-sm font-medium text-gray-500">Email</dt>
-                  <dd className="text-sm text-gray-900">{formData.email}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">
-                    Current Role
-                  </dt>
                   <dd className="text-sm text-gray-900">
-                    {formData.currentRole || "Not specified"}
+                    <input
+                      type="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleInputChange}
+                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">
-                    Experience
-                  </dt>
-                  <dd className="text-sm text-gray-900">
-                    {formData.experience || "Not specified"}
-                  </dd>
+                  <dt className="text-sm font-medium text-gray-500">Current Role</dt>
+                  <dd className="text-sm text-gray-900">{formData.currentRole || "Not specified"}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">Experience</dt>
+                  <dd className="text-sm text-gray-900">{formData.experience || "Not specified"}</dd>
                 </div>
                 <div className="sm:col-span-2">
                   <dt className="text-sm font-medium text-gray-500">Skills</dt>
-                  <dd className="text-sm text-gray-900">
-                    {formData.skills || "Not specified"}
-                  </dd>
+                  <dd className="text-sm text-gray-900">{formData.skills || "Not specified"}</dd>
                 </div>
               </dl>
+
+              <div className="mt-6 border-t pt-6">
+                <h5 className="text-sm font-medium text-gray-700 mb-3">Create account</h5>
+
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
+                    <input
+                      id="password"
+                      name="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Choose a password"
+                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">Confirm Password</label>
+                    <input
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repeat your password"
+                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  {formError && <p className="text-sm text-red-600">{formError}</p>}
+                </div>
+              </div>
             </div>
           </div>
         );
