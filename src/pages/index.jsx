@@ -23,8 +23,7 @@ export default function Onboarding() {
     education: "",
     skills: "",
     cvFile: null,
-    transcriptFile: null,
-    qualificationsFile: null,
+   
   });
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -231,22 +230,6 @@ export default function Onboarding() {
               onFileUpload={(file) => handleFileUpload("cv", file)}
               progress={uploadProgress.cv}
               isRequired
-            />
-
-            <FileUploadSection
-              title="Academic Transcript (Optional)"
-              description="Upload your academic transcript to help us better match you with relevant opportunities."
-              accept=".pdf,.doc,.docx,.jpg,.png"
-              onFileUpload={(file) => handleFileUpload("transcript", file)}
-              progress={uploadProgress.transcript}
-            />
-
-            <FileUploadSection
-              title="Academic Qualifications (Optional)"
-              description="Upload any certificates, diplomas, or degrees you'd like to include."
-              accept=".pdf,.doc,.docx,.jpg,.png"
-              onFileUpload={(file) => handleFileUpload("qualifications", file)}
-              progress={uploadProgress.qualifications}
             />
           </div>
         );
