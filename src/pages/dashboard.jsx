@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useRouter } from "next/router";
+import Link from "next/link";
 import Layout from "../components/Layout";
 import JobCard from "../components/JobCard";
 import JobModal from "../components/JobModal";
@@ -9,27 +11,149 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
+  Settings,
+  X,
 } from "lucide-react";
+import { getSupabase } from "../lib/supabaseClient";
 
 export default function Dashboard() {
+  const router = useRouter();
+  const supabase = getSupabase();
+
   const [jobs, setJobs] = useState([]);
   const [filteredJobs, setFilteredJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [stats, setStats] = useState({
     total: 0,
     applied: 0,
     pending: 0,
     failed: 0,
+    discovered: 0,
   });
 
-  // Mock data - simulate backend data
+  // Check if user just completed onboarding
   useEffect(() => {
+    if (router.query.onboarding === "complete") {
+      setShowWelcomeModal(true);
+      // Remove the query parameter without refreshing
+      router.replace("/dashboard", undefined, { shallow: true });
+    }
+  }, [router.query]);
+
+  // Check authentication and load data
+  useEffect(() => {
+    checkUser();
+
+    // Subscribe to realtime updates for matches
+    const matchesSubscription = supabase
+      .channel("matches_channel")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "matches" },
+        () => {
+          fetchMatches();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      matchesSubscription.unsubscribe();
+    };
+  }, []);
+
+  const checkUser = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        // Redirect to onboarding if not logged in
+        router.push("/onboarding");
+        return;
+      }
+
+      setUser(user);
+      await fetchProfile(user.id);
+      await fetchMatches();
+    } catch (error) {
+      console.error("Auth check error:", error);
+      router.push("/onboarding");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchProfile = async (userId) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+    setProfile(data);
+  };
+
+  const fetchMatches = async () => {
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("matches")
+      .select(
+        `
+        *,
+        jobs (*)
+      `,
+      )
+      .eq("user_id", user.id)
+      .order("match_score", { ascending: false });
+
+    if (data && data.length > 0) {
+      // Transform matches to match your job card format
+      const transformedJobs = data.map((match) => ({
+        id: match.job_id,
+        title: match.jobs?.title || "Unknown Title",
+        company: match.jobs?.company || "Unknown Company",
+        location: match.jobs?.location || "Location not specified",
+        salary: match.jobs?.salary || "Salary not specified",
+        type: match.jobs?.type || "Full-time",
+        postedDate:
+          match.jobs?.created_at?.split("T")[0] ||
+          new Date().toISOString().split("T")[0],
+        description: match.jobs?.description || "No description available",
+        requirements: match.jobs?.requirements
+          ? Array.isArray(match.jobs.requirements)
+            ? match.jobs.requirements
+            : match.jobs.requirements.split("\n")
+          : [],
+        status: match.status || "discovered",
+        appliedDate: match.applied_at?.split("T")[0],
+        matchScore: match.match_score,
+        reason: match.reason,
+        source: match.jobs?.source || "Job Board",
+        apply_email: match.jobs?.apply_email,
+        website: match.jobs?.website,
+      }));
+
+      setJobs(transformedJobs);
+      setFilteredJobs(transformedJobs);
+      calculateStats(transformedJobs);
+    } else {
+      // If no matches yet, use mock data for demo
+      loadMockData();
+    }
+  };
+
+  const loadMockData = () => {
     const mockJobs = [
       {
-        id: 1,
+        id: "1",
         title: "Senior Software Engineer",
         company: "TechCorp Zimbabwe",
         location: "Harare, Zimbabwe",
@@ -51,7 +175,7 @@ export default function Dashboard() {
         source: "LinkedIn",
       },
       {
-        id: 2,
+        id: "2",
         title: "Frontend Developer",
         company: "Digital Solutions Ltd",
         location: "Remote",
@@ -72,7 +196,7 @@ export default function Dashboard() {
         source: "Company Website",
       },
       {
-        id: 3,
+        id: "3",
         title: "Full Stack Developer",
         company: "Innovate Africa",
         location: "Bulawayo, Zimbabwe",
@@ -94,7 +218,7 @@ export default function Dashboard() {
         source: "Indeed",
       },
       {
-        id: 4,
+        id: "4",
         title: "DevOps Engineer",
         company: "Cloud Systems ZW",
         location: "Harare, Zimbabwe",
@@ -110,7 +234,7 @@ export default function Dashboard() {
         source: "Company Website",
       },
       {
-        id: 5,
+        id: "5",
         title: "Mobile App Developer",
         company: "AppWorks Studio",
         location: "Remote",
@@ -133,17 +257,19 @@ export default function Dashboard() {
 
     setJobs(mockJobs);
     setFilteredJobs(mockJobs);
+    calculateStats(mockJobs);
+  };
 
-    // Calculate stats
+  const calculateStats = (jobsData) => {
     const stats = {
-      total: mockJobs.length,
-      applied: mockJobs.filter((job) => job.status === "applied").length,
-      pending: mockJobs.filter((job) => job.status === "pending").length,
-      failed: mockJobs.filter((job) => job.status === "failed").length,
-      discovered: mockJobs.filter((job) => job.status === "discovered").length,
+      total: jobsData.length,
+      applied: jobsData.filter((job) => job.status === "applied").length,
+      pending: jobsData.filter((job) => job.status === "pending").length,
+      failed: jobsData.filter((job) => job.status === "failed").length,
+      discovered: jobsData.filter((job) => job.status === "discovered").length,
     };
     setStats(stats);
-  }, []);
+  };
 
   // Filter jobs based on search and status
   useEffect(() => {
@@ -152,9 +278,9 @@ export default function Dashboard() {
     if (searchTerm) {
       filtered = filtered.filter(
         (job) =>
-          job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          job.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          job.location.toLowerCase().includes(searchTerm.toLowerCase())
+          job.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          job.company?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          job.location?.toLowerCase().includes(searchTerm.toLowerCase()),
       );
     }
 
@@ -170,8 +296,8 @@ export default function Dashboard() {
     setIsModalOpen(true);
   };
 
-  const handleApply = (jobId) => {
-    // Simulate applying to job
+  const handleApply = async (jobId) => {
+    // Update local state immediately for UI feedback
     setJobs((prev) =>
       prev.map((job) =>
         job.id === jobId
@@ -180,8 +306,8 @@ export default function Dashboard() {
               status: "pending",
               appliedDate: new Date().toISOString().split("T")[0],
             }
-          : job
-      )
+          : job,
+      ),
     );
 
     // Update stats
@@ -191,7 +317,78 @@ export default function Dashboard() {
       discovered: prev.discovered - 1,
     }));
 
+    // If user is logged in, create application record and task
+    if (user) {
+      try {
+        // First, get the CV
+        const { data: cvs } = await supabase
+          .from("cvs")
+          .select("id")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (cvs && cvs.length > 0) {
+          // Create application record
+          await supabase.from("applications").insert({
+            user_id: user.id,
+            cv_id: cvs[0].id,
+            job_id: jobId,
+            status: "pending",
+          });
+
+          // Create task for generating application
+          await supabase.from("tasks").insert({
+            type: "generate_application",
+            payload: {
+              job_id: jobId,
+              user_id: user.id,
+              cv_id: cvs[0].id,
+            },
+            status: "pending",
+          });
+        }
+      } catch (error) {
+        console.error("Error creating application:", error);
+      }
+    }
+
     setIsModalOpen(false);
+  };
+
+  const handleExportReport = () => {
+    // Create CSV content
+    const headers = [
+      "Title",
+      "Company",
+      "Location",
+      "Status",
+      "Match Score",
+      "Applied Date",
+      "Source",
+    ];
+    const csvContent = [
+      headers.join(","),
+      ...jobs.map((job) =>
+        [
+          `"${job.title}"`,
+          `"${job.company}"`,
+          `"${job.location}"`,
+          job.status,
+          job.matchScore,
+          job.appliedDate || "",
+          `"${job.source}"`,
+        ].join(","),
+      ),
+    ].join("\n");
+
+    // Download CSV
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `job-applications-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
   };
 
   const getStatusIcon = (status) => {
@@ -220,18 +417,90 @@ export default function Dashboard() {
     }
   };
 
+  if (loading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="space-y-6">
+        {/* Welcome Modal for First-Time Users */}
+        {showWelcomeModal && (
+          <div className="fixed inset-0 bg-black/10 backdrop-blur-lg bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 relative animate-fade-in">
+              <button
+                onClick={() => setShowWelcomeModal(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 className="w-8 h-8 text-green-600" />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                  Welcome to AI Job Agent!
+                </h2>
+                <p className="text-gray-600">
+                  Your account has been successfully created.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 rounded-xl p-4 mb-6">
+                <div className="flex items-start space-x-3">
+                  <Settings className="w-5 h-5 text-blue-600 mt-0.5" />
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-1">
+                      Complete Your Setup
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-3">
+                      Configure your job preferences, desired roles, and
+                      application settings to get the best matches.
+                    </p>
+                    <Link
+                      href="/settings"
+                      className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                    >
+                      Go to Settings
+                      <Settings className="w-4 h-4 ml-2" />
+                    </Link>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-center">
+                <button
+                  onClick={() => setShowWelcomeModal(false)}
+                  className="text-gray-500 hover:text-gray-700 text-sm"
+                >
+                  Maybe later
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Job Dashboard</h1>
             <p className="text-gray-600">
-              Monitor your automated job applications
+              {user
+                ? `Welcome back, ${profile?.full_name || user.email}`
+                : "Monitor your automated job applications"}
             </p>
           </div>
-          <button className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+          <button
+            onClick={handleExportReport}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
             <Download className="w-4 h-4 mr-2" />
             Export Report
           </button>

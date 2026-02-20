@@ -4,15 +4,16 @@ import {
   Upload,
   User,
   FileText,
-  GraduationCap,
   CheckCircle2,
   ArrowRight,
-  AlertCircle,
   Briefcase,
 } from "lucide-react";
+import { createClient } from "@/lib/supabaseClient";
 
 export default function Onboarding() {
   const router = useRouter();
+  const supabase = createClient();
+
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     fullName: "",
@@ -23,15 +24,13 @@ export default function Onboarding() {
     education: "",
     skills: "",
     cvFile: null,
-   
   });
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({
     cv: 0,
-    transcript: 0,
-    qualifications: 0,
   });
 
   const steps = [
@@ -46,27 +45,105 @@ export default function Onboarding() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFileUpload = (fileType, file) => {
+  const handleFileUpload = async (fileType, file) => {
     if (file) {
-      // Simulate file upload progress
       setUploadProgress((prev) => ({ ...prev, [fileType]: 0 }));
+
+      // Simulate progress for UX
       const interval = setInterval(() => {
         setUploadProgress((prev) => {
           const newProgress = prev[fileType] + 10;
           if (newProgress >= 100) {
             clearInterval(interval);
-            setFormData((prev) => ({ ...prev, [`${fileType}File`]: file }));
             return { ...prev, [fileType]: 100 };
           }
           return { ...prev, [fileType]: newProgress };
         });
       }, 100);
+
+      // Store the file in state
+      setFormData((prev) => ({ ...prev, [`${fileType}File`]: file }));
     }
   };
 
-  const handleSubmit = (e) => {
+  // Updated upload function with RLS-friendly filename
+  const uploadFileToStorage = async (file, userId, bucket) => {
+    try {
+      const fileExt = file.name.split(".").pop();
+      // Simple filename format: userId-timestamp.extension
+      // This makes RLS policies easier to write
+      const fileName = `${userId}-${Date.now()}.${fileExt}`;
+
+      console.log('Uploading file:', { bucket, fileName });
+
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (error) {
+        console.error('Upload error:', error);
+        throw error;
+      }
+      
+      console.log('Upload successful:', data);
+      return data.path;
+    } catch (error) {
+      console.error('Upload function error:', error);
+      throw error;
+    }
+  };
+
+  const createProfile = async (userId, cvId) => {
+    const skills = formData.skills
+      ? formData.skills.split(",").map((skill) => skill.trim())
+      : [];
+
+    const { error } = await supabase.from("profiles").insert({
+      user_id: userId,
+      full_name: formData.fullName,
+      primary_role: formData.currentRole,
+      experience_level: formData.experience,
+      skills: skills,
+      summary: `Professional with ${formData.experience || "some"} years of experience in ${formData.currentRole || "various roles"}`,
+      qualifications: [],
+    });
+
+    if (error) throw error;
+  };
+
+  const createCVRecord = async (userId, filePath) => {
+    const { data, error } = await supabase
+      .from("cvs")
+      .insert({
+        user_id: userId,
+        file_path: filePath,
+        extracted_text: "",
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  };
+
+  const createParseCVTask = async (cvId, userId) => {
+    const { error } = await supabase.from("tasks").insert({
+      type: "parse_cv",
+      payload: {
+        cv_id: cvId,
+        user_id: userId,
+      },
+      status: "pending",
+    });
+
+    if (error) throw error;
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // clear previous errors
     setFormError("");
 
     if (currentStep < steps.length) {
@@ -74,7 +151,7 @@ export default function Onboarding() {
       return;
     }
 
-    // Final step: validate email and passwords before completing setup
+    // Final step validation
     if (!formData.email) {
       setFormError("Please provide an email address.");
       return;
@@ -95,10 +172,88 @@ export default function Onboarding() {
       return;
     }
 
-    // Simulate API call to create account and redirect to dashboard
-    setTimeout(() => {
-      router.push("/dashboard");
-    }, 1000);
+    if (!formData.cvFile) {
+      setFormError("Please upload your CV.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // STEP 1: Create the user account FIRST
+      console.log('Creating user account...');
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: password,
+        options: {
+          data: {
+            full_name: formData.fullName,
+            phone: formData.phone,
+          },
+        },
+      });
+
+      if (authError) {
+        // Handle specific error cases
+        if (authError.message.includes('rate limit')) {
+          throw new Error('Too many signup attempts. Please wait a few minutes and try again.');
+        }
+        if (authError.message.includes('already registered')) {
+          throw new Error('This email is already registered. Please try logging in instead.');
+        }
+        throw authError;
+      }
+      
+      if (!authData.user) throw new Error("No user returned from signup");
+      
+      console.log('User created successfully:', authData.user.id);
+
+      // STEP 2: Now that we have a logged-in user, upload the CV
+      // The user is now authenticated, so storage uploads will work
+      console.log('Uploading CV...');
+      const cvPath = await uploadFileToStorage(
+        formData.cvFile,
+        authData.user.id,
+        "cvs", // Just the bucket name, no folder path
+      );
+
+      // STEP 3: Create CV record in database
+      console.log('Creating CV record...');
+      const cvRecord = await createCVRecord(authData.user.id, cvPath);
+
+      // STEP 4: Create profile
+      console.log('Creating profile...');
+      await createProfile(authData.user.id, cvRecord.id);
+
+      // STEP 5: Create task for CV parsing
+      console.log('Creating parse task...');
+      await createParseCVTask(cvRecord.id, authData.user.id);
+
+      console.log('Onboarding complete!');
+      
+      // Redirect to dashboard
+      router.push("/dashboard?onboarding=complete");
+      
+    } catch (error) {
+      console.error("Onboarding error:", error);
+      
+      // User-friendly error messages
+      if (error.message?.includes('row-level security')) {
+        setFormError(
+          "Storage permission error. Please make sure the 'cvs' bucket exists and RLS policies are configured correctly."
+        );
+      } else if (error.message?.includes('JWT')) {
+        setFormError(
+          "Authentication error. Please try again."
+        );
+      } else {
+        setFormError(
+          error.message || "An error occurred during setup. Please try again.",
+        );
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const renderStepContent = () => {
@@ -252,44 +407,63 @@ export default function Onboarding() {
             </div>
 
             <div className="bg-white border border-gray-200 rounded-lg p-6">
-              <h4 className="font-medium text-gray-900 mb-4">Profile Summary</h4>
+              <h4 className="font-medium text-gray-900 mb-4">
+                Profile Summary
+              </h4>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">Full Name</dt>
+                  <dt className="text-sm font-medium text-gray-500">
+                    Full Name
+                  </dt>
                   <dd className="text-sm text-gray-900">{formData.fullName}</dd>
                 </div>
                 <div>
                   <dt className="text-sm font-medium text-gray-500">Email</dt>
+                  <dd className="text-sm text-gray-900">{formData.email}</dd>
+                </div>
+                <div>
+                  <dt className="text-sm font-medium text-gray-500">
+                    Current Role
+                  </dt>
                   <dd className="text-sm text-gray-900">
-                    <input
-                      type="email"
-                      name="email"
-                      value={formData.email}
-                      onChange={handleInputChange}
-                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
+                    {formData.currentRole || "Not specified"}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">Current Role</dt>
-                  <dd className="text-sm text-gray-900">{formData.currentRole || "Not specified"}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Experience</dt>
-                  <dd className="text-sm text-gray-900">{formData.experience || "Not specified"}</dd>
+                  <dt className="text-sm font-medium text-gray-500">
+                    Experience
+                  </dt>
+                  <dd className="text-sm text-gray-900">
+                    {formData.experience || "Not specified"}
+                  </dd>
                 </div>
                 <div className="sm:col-span-2">
                   <dt className="text-sm font-medium text-gray-500">Skills</dt>
-                  <dd className="text-sm text-gray-900">{formData.skills || "Not specified"}</dd>
+                  <dd className="text-sm text-gray-900">
+                    {formData.skills || "Not specified"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-sm font-medium text-gray-500">CV</dt>
+                  <dd className="text-sm text-gray-900">
+                    {formData.cvFile?.name || "Not uploaded"}
+                  </dd>
                 </div>
               </dl>
 
               <div className="mt-6 border-t pt-6">
-                <h5 className="text-sm font-medium text-gray-700 mb-3">Create account</h5>
+                <h5 className="text-sm font-medium text-gray-700 mb-3">
+                  Create account
+                </h5>
 
                 <div className="space-y-4">
                   <div>
-                    <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
+                    <label
+                      htmlFor="password"
+                      className="block text-sm font-medium text-gray-700"
+                    >
+                      Password
+                    </label>
                     <input
                       id="password"
                       name="password"
@@ -302,7 +476,12 @@ export default function Onboarding() {
                   </div>
 
                   <div>
-                    <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">Confirm Password</label>
+                    <label
+                      htmlFor="confirmPassword"
+                      className="block text-sm font-medium text-gray-700"
+                    >
+                      Confirm Password
+                    </label>
                     <input
                       id="confirmPassword"
                       name="confirmPassword"
@@ -314,7 +493,11 @@ export default function Onboarding() {
                     />
                   </div>
 
-                  {formError && <p className="text-sm text-red-600">{formError}</p>}
+                  {formError && (
+                    <div className="bg-red-50 border border-red-200 rounded-md p-3">
+                      <p className="text-sm text-red-600">{formError}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -388,7 +571,8 @@ export default function Onboarding() {
                 <button
                   type="button"
                   onClick={() => setCurrentStep(currentStep - 1)}
-                  className="px-6 py-3 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={isLoading}
+                  className="px-6 py-3 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Back
                 </button>
@@ -398,11 +582,42 @@ export default function Onboarding() {
 
               <button
                 type="submit"
-                className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center"
+                disabled={isLoading}
+                className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {currentStep === steps.length ? "Complete Setup" : "Continue"}
-                {currentStep < steps.length && (
-                  <ArrowRight className="ml-2 w-4 h-4" />
+                {isLoading ? (
+                  <>
+                    <svg
+                      className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
+                    </svg>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    {currentStep === steps.length
+                      ? "Complete Setup"
+                      : "Continue"}
+                    {currentStep < steps.length && (
+                      <ArrowRight className="ml-2 w-4 h-4" />
+                    )}
+                  </>
                 )}
               </button>
             </div>
@@ -424,7 +639,7 @@ function FileUploadSection({
   const [file, setFile] = useState(null);
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
+    const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
       onFileUpload(selectedFile);
