@@ -66,7 +66,7 @@ export const AuthProvider = ({ children }) => {
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
-      router.push('/auth');
+      router.push('/login');
     } catch (error) {
       console.error('Error signing out:', error);
     }
