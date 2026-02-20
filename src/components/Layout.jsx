@@ -1,16 +1,36 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { Briefcase, Settings, User, LogOut, Menu, X } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 
 export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const router = useRouter();
 
+  // 🔥 AUTH CONTEXT
+  const { user, profile, signOut, authLoading } = useAuth();
+
+  // ⛔ Prevent dashboard render while checking session
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-gray-600 text-lg">Loading session...</p>
+      </div>
+    );
+  }
+
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: Briefcase },
     { name: "Settings", href: "/settings", icon: Settings },
   ];
+
+  // Avatar initial
+  const userInitial = (
+    profile?.full_name ||
+    user?.email ||
+    "U"
+  )[0].toUpperCase();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -23,6 +43,7 @@ export default function Layout({ children }) {
               JobSearch Engine
             </h1>
           </div>
+
           <nav className="flex flex-1 flex-col">
             <ul role="list" className="flex flex-1 flex-col gap-y-7">
               <li>
@@ -61,7 +82,7 @@ export default function Layout({ children }) {
               <div className="flex items-center">
                 <Briefcase className="h-8 w-8 text-blue-600" />
                 <h1 className="ml-2 text-xl font-bold text-gray-900">
-                  Job Search Engine
+                  JobSearch Engine
                 </h1>
               </div>
               <button
@@ -71,6 +92,7 @@ export default function Layout({ children }) {
                 <X className="h-6 w-6" />
               </button>
             </div>
+
             <nav className="flex flex-1 flex-col">
               <ul role="list" className="flex flex-1 flex-col gap-y-7">
                 <li>
@@ -116,15 +138,27 @@ export default function Layout({ children }) {
 
           <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6 justify-end">
             <div className="flex items-center gap-x-4 lg:gap-x-6">
-              <div className="relative">
-                <div className="flex items-center gap-2">
-                  <User className="h-8 w-8 rounded-full bg-gray-50 p-1" />
-                  <span className="hidden lg:flex lg:items-center">
-                    <span className="ml-4 text-sm font-semibold leading-6 text-gray-900">
-                      John Doe
-                    </span>
-                  </span>
+              <div className="flex items-center gap-3">
+                {/* Avatar */}
+                <div className="h-8 w-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold">
+                  {userInitial}
                 </div>
+
+                {/* Name */}
+                <span className="hidden lg:flex lg:items-center">
+                  <span className="ml-2 text-sm font-semibold leading-6 text-gray-900">
+                    {profile?.full_name || user?.email}
+                  </span>
+                </span>
+
+                {/* Logout */}
+                <button
+                  onClick={signOut}
+                  className="flex items-center gap-2 text-sm text-red-600 hover:text-red-700 ml-4"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Logout
+                </button>
               </div>
             </div>
           </div>

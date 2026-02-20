@@ -1,14 +1,18 @@
-import { useState } from "react";
-import Layout from "../components/Layout";
-import { Save, Mail, Bell, Shield, CheckCircle2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import Layout from "@/components/Layout";
+import { Save, Mail, Bell, Shield, CheckCircle2, AlertCircle } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { getSupabase } from "@/lib/supabaseClient";
 
 export default function Settings() {
+  const { user, isAuthenticated } = useAuth();
+  const supabase = getSupabase();
   const [activeTab, setActiveTab] = useState("email");
   const [settings, setSettings] = useState({
     email: {
-      applicationEmail: "applications@jobautoapply.com",
-      notificationEmail: "user@example.com",
-      emailSignature: "Best regards,\nJohn Doe",
+      applicationEmail: "",
+      notificationEmail: "",
+      emailSignature: "",
       autoSend: true,
     },
     notifications: {
@@ -20,13 +24,16 @@ export default function Settings() {
     preferences: {
       maxApplications: 10,
       minMatchScore: 70,
-      locations: ["Harare", "Remote"],
-      jobTypes: ["Full-time", "Contract"],
+      locations: [],
+      jobTypes: [],
     },
   });
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
+  const [error, setError] = useState(null);
+  const [settingsExist, setSettingsExist] = useState(true);
 
   const tabs = [
     { id: "email", name: "Email Settings", icon: Mail },
@@ -34,17 +41,140 @@ export default function Settings() {
     { id: "preferences", name: "Preferences", icon: Shield },
   ];
 
+  // Fetch user settings on component mount
+  useEffect(() => {
+    if (user) {
+      fetchUserSettings();
+    }
+  }, [user]);
+
+  const fetchUserSettings = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No settings found
+          setSettingsExist(false);
+          // Initialize with empty/default settings
+          setSettings({
+            email: {
+              applicationEmail: user.email || "",
+              notificationEmail: user.email || "",
+              emailSignature: "",
+              autoSend: true,
+            },
+            notifications: {
+              jobMatches: true,
+              applicationStatus: true,
+              systemUpdates: false,
+              weeklyReports: true,
+            },
+            preferences: {
+              maxApplications: 10,
+              minMatchScore: 70,
+              locations: [],
+              jobTypes: [],
+            },
+          });
+        } else {
+          throw error;
+        }
+      } else if (data) {
+        setSettingsExist(true);
+        // Map database fields to our settings structure
+        setSettings({
+          email: {
+            applicationEmail: data.application_email || "",
+            notificationEmail: data.notification_email || "",
+            emailSignature: data.email_signature || "",
+            autoSend: data.auto_send ?? true,
+          },
+          notifications: {
+            jobMatches: data.notify_job_matches ?? true,
+            applicationStatus: data.notify_application_status ?? true,
+            systemUpdates: data.notify_system_updates ?? false,
+            weeklyReports: data.notify_weekly_reports ?? true,
+          },
+          preferences: {
+            maxApplications: data.max_applications ?? 10,
+            minMatchScore: data.min_match_score ?? 70,
+            locations: data.preferred_locations || [],
+            jobTypes: data.job_types || [],
+          },
+        });
+      }
+    } catch (err) {
+      console.error('Error fetching settings:', err);
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSave = async () => {
-    setIsLoading(true);
-    setSaveStatus("saving");
+    if (!user) return;
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      setIsSaving(true);
+      setSaveStatus("saving");
+      setError(null);
 
-    setIsLoading(false);
-    setSaveStatus("saved");
+      // Prepare data for database
+      const settingsData = {
+        user_id: user.id,
+        application_email: settings.email.applicationEmail,
+        notification_email: settings.email.notificationEmail,
+        email_signature: settings.email.emailSignature,
+        auto_send: settings.email.autoSend,
+        notify_job_matches: settings.notifications.jobMatches,
+        notify_application_status: settings.notifications.applicationStatus,
+        notify_system_updates: settings.notifications.systemUpdates,
+        notify_weekly_reports: settings.notifications.weeklyReports,
+        max_applications: settings.preferences.maxApplications,
+        min_match_score: settings.preferences.minMatchScore,
+        preferred_locations: settings.preferences.locations,
+        job_types: settings.preferences.jobTypes,
+        updated_at: new Date().toISOString(),
+      };
 
-    setTimeout(() => setSaveStatus(""), 3000);
+      let error;
+
+      if (settingsExist) {
+        // Update existing settings
+        const { error: updateError } = await supabase
+          .from('user_settings')
+          .update(settingsData)
+          .eq('user_id', user.id);
+        error = updateError;
+      } else {
+        // Insert new settings
+        const { error: insertError } = await supabase
+          .from('user_settings')
+          .insert([{ ...settingsData, created_at: new Date().toISOString() }]);
+        error = insertError;
+      }
+
+      if (error) throw error;
+
+      setSettingsExist(true);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus(""), 3000);
+    } catch (err) {
+      console.error('Error saving settings:', err);
+      setError(err.message);
+      setSaveStatus("error");
+      setTimeout(() => setSaveStatus(""), 3000);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleInputChange = (section, field, value) => {
@@ -111,6 +241,7 @@ export default function Settings() {
               handleInputChange("email", "emailSignature", e.target.value)
             }
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Best regards,&#10;Your Name"
           />
         </div>
 
@@ -131,29 +262,30 @@ export default function Settings() {
         </div>
       </div>
 
-      <div className="border-t pt-6">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">
-          Email Verification
-        </h3>
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <Mail className="w-5 h-5 text-blue-600 mr-2" />
-              <span className="text-sm font-medium text-blue-800">
-                applications@jobautoapply.com
-              </span>
+      {settings.email.applicationEmail && (
+        <div className="border-t pt-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Email Verification
+          </h3>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <Mail className="w-5 h-5 text-blue-600 mr-2" />
+                <span className="text-sm font-medium text-blue-800">
+                  {settings.email.applicationEmail}
+                </span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                <span className="text-sm text-green-700">Verified</span>
+              </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <CheckCircle2 className="w-5 h-5 text-green-600" />
-              <span className="text-sm text-green-700">Verified</span>
-            </div>
+            <p className="mt-2 text-sm text-blue-700">
+              This email is configured and ready to send applications.
+            </p>
           </div>
-          <p className="mt-2 text-sm text-blue-700">
-            This email is configured and ready to send applications. We handle
-            all email delivery and tracking.
-          </p>
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -285,7 +417,7 @@ export default function Settings() {
               handleInputChange(
                 "preferences",
                 "maxApplications",
-                parseInt(e.target.value)
+                parseInt(e.target.value) || 1
               )
             }
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -308,7 +440,7 @@ export default function Settings() {
               handleInputChange(
                 "preferences",
                 "minMatchScore",
-                parseInt(e.target.value)
+                parseInt(e.target.value) || 0
               )
             }
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -326,11 +458,12 @@ export default function Settings() {
         <div className="flex flex-wrap gap-2 mb-2">
           {settings.preferences.locations.map((location, index) => (
             <span
-              key={location}
+              key={`${location}-${index}`}
               className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
             >
               {location}
               <button
+                type="button"
                 onClick={() => {
                   const newLocations = settings.preferences.locations.filter(
                     (_, i) => i !== index
@@ -349,9 +482,23 @@ export default function Settings() {
             type="text"
             placeholder="Add location..."
             id="newLocation"
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                const input = document.getElementById("newLocation");
+                const value = input.value.trim();
+                if (value && !settings.preferences.locations.includes(value)) {
+                  handleInputChange("preferences", "locations", [
+                    ...settings.preferences.locations,
+                    value,
+                  ]);
+                  input.value = "";
+                }
+              }
+            }}
             className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
           <button
+            type="button"
             onClick={() => {
               const input = document.getElementById("newLocation");
               const value = input.value.trim();
@@ -397,6 +544,83 @@ export default function Settings() {
       </div>
     </div>
   );
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="ml-2 text-gray-600">Loading settings...</span>
+        </div>
+      </Layout>
+    );
+  }
+
+  // No settings alert
+  if (!settingsExist) {
+    return (
+      <Layout>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+            <p className="text-gray-600">Manage your application preferences and email settings</p>
+          </div>
+
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+            <div className="flex items-center space-x-3">
+              <AlertCircle className="w-6 h-6 text-yellow-600" />
+              <div>
+                <h3 className="text-lg font-medium text-yellow-800">No Settings Found</h3>
+                <p className="text-yellow-700 mt-1">
+                  You haven't configured your settings yet. Please set up your preferences to get started.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200">
+            <div className="p-6">
+              {renderEmailSettings()}
+            </div>
+            <div className="flex justify-end items-center space-x-4 p-6 border-t border-gray-200">
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Create Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  // Error state
+  if (error && !settingsExist) {
+    return (
+      <Layout>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-center space-x-3">
+            <AlertCircle className="w-6 h-6 text-red-600" />
+            <div>
+              <h3 className="text-lg font-medium text-red-800">Error Loading Settings</h3>
+              <p className="text-red-700 mt-1">{error}</p>
+              <button
+                onClick={fetchUserSettings}
+                className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -454,9 +678,15 @@ export default function Settings() {
                 <span className="text-sm">Settings saved successfully!</span>
               </div>
             )}
+            {saveStatus === "error" && (
+              <div className="flex items-center text-red-600">
+                <AlertCircle className="w-4 h-4 mr-1" />
+                <span className="text-sm">Error saving settings</span>
+              </div>
+            )}
             <button
               onClick={handleSave}
-              disabled={isLoading}
+              disabled={isSaving}
               className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
               <Save className="w-4 h-4 mr-2" />
