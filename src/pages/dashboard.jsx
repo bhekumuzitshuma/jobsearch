@@ -199,6 +199,33 @@ export default function Dashboard() {
 
   if (!user) return null;
 
+  // ---------------- STATUS HELPERS ----------------
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case "applied":
+        return <CheckCircle2 size={16} />;
+      case "pending":
+        return <Clock size={16} />;
+      case "failed":
+        return <AlertCircle size={16} />;
+      default:
+        return <Settings size={16} />;
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "applied":
+        return "bg-green-100 text-green-800";
+      case "pending":
+        return "bg-yellow-100 text-yellow-800";
+      case "failed":
+        return "bg-red-100 text-red-800";
+      default:
+        return "bg-blue-100 text-blue-800";
+    }
+  };
+
   // ---------------- UI ----------------
   return (
     <Layout>
@@ -259,6 +286,8 @@ export default function Dashboard() {
                 setSelectedJob(job);
                 setIsModalOpen(true);
               }}
+              getStatusIcon={getStatusIcon}
+              getStatusColor={getStatusColor}
             />
           ))
         )}
@@ -269,6 +298,8 @@ export default function Dashboard() {
           job={selectedJob}
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
+          getStatusIcon={getStatusIcon}
+          getStatusColor={getStatusColor}
         />
       )}
     </Layout>
