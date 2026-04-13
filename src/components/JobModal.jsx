@@ -19,11 +19,11 @@ export default function JobModal({
       case "failed":
         return "Application Failed";
       default:
-        return "Ready to Apply";
+        return "Suggested";
     }
   };
 
-  const canApply = job.status === "discovered";
+  const canApply = job.status === "suggested";
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -81,7 +81,7 @@ export default function JobModal({
                     {getStatusText(job.status)}
                   </p>
                   <p className="text-sm text-gray-600">
-                    {job.status === "discovered"
+                    {job.status === "suggested"
                       ? "This job matches your profile perfectly!"
                       : job.status === "applied"
                       ? `Application sent on ${job.appliedDate}`
@@ -190,12 +190,18 @@ export default function JobModal({
                 <h4 className="font-medium text-green-900 mb-2">
                   Why This is a Good Match
                 </h4>
-                <ul className="text-sm text-green-700 space-y-1">
-                  <li>• Skills match: 95% alignment</li>
-                  <li>• Experience level: Perfect fit</li>
-                  <li>• Location: Preferred area</li>
-                  <li>• Salary: Within your range</li>
-                </ul>
+                <div className="text-sm text-green-700">
+                  {job.reason ? (
+                    <p>{job.reason}</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      <li>• Skills match: 95% alignment</li>
+                      <li>• Experience level: Perfect fit</li>
+                      <li>• Location: Preferred area</li>
+                      <li>• Salary: Within your range</li>
+                    </ul>
+                  )}
+                </div>
               </div>
 
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -204,7 +210,7 @@ export default function JobModal({
                 </h4>
                 <div className="text-sm text-yellow-700 space-y-2">
                   <div className="flex justify-between">
-                    <span>Discovered:</span>
+                    <span>Suggested:</span>
                     <span>{job.postedDate}</span>
                   </div>
                   {job.appliedDate && (

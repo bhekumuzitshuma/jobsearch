@@ -36,7 +36,6 @@ export default function Dashboard() {
     applied: 0,
     pending: 0,
     failed: 0,
-    discovered: 0,
   });
 
   console.log("Dashboard render:", { user, authLoading });
@@ -89,30 +88,70 @@ export default function Dashboard() {
         return;
       }
 
-      const transformedJobs = data.map((match) => ({
-        id: match.job_id,
-        title: match.jobs?.title || "Unknown Title",
-        company: match.jobs?.company || "Unknown Company",
-        location: match.jobs?.location || "Location not specified",
-        salary: match.jobs?.salary || "Salary not specified",
-        type: match.jobs?.type || "Full-time",
-        postedDate:
-          match.jobs?.created_at?.split("T")[0] ||
-          new Date().toISOString().split("T")[0],
-        description: match.jobs?.description || "",
-        requirements: match.jobs?.requirements
-          ? Array.isArray(match.jobs.requirements)
-            ? match.jobs.requirements
-            : match.jobs.requirements.split("\n")
-          : [],
-        status: match.status || "discovered",
-        appliedDate: match.applied_at?.split("T")[0],
-        matchScore: match.match_score,
-        reason: match.reason,
-        source: match.jobs?.source || "Job Board",
-        apply_email: match.jobs?.apply_email,
-        website: match.jobs?.website,
-      }));
+      // Fetch any existing applications for these jobs by this user
+      const jobIds = data.map((m) => m.job_id).filter(Boolean);
+      let apps = [];
+      if (jobIds.length > 0) {
+        const { data: appsData, error: appsError } = await supabase
+          .from("applications")
+          .select("*")
+          .in("job_id", jobIds)
+          .eq("user_id", user.id);
+
+        if (appsError) {
+          console.error("Application fetch error:", appsError);
+        } else if (appsData) {
+          apps = appsData;
+        }
+      }
+
+      const appMap = apps.reduce((acc, a) => {
+        acc[a.job_id] = a;
+        return acc;
+      }, {});
+
+      const transformedJobs = data.map((match) => {
+        const jobRow = match.jobs || {};
+        const application = appMap[match.job_id];
+
+        // derive status from applications table when present
+        let status = match.status || "suggested";
+        let appliedDate = undefined;
+        if (application) {
+          if (application.status === "success") status = "applied";
+          else if (application.status === "failed") status = "failed";
+          else if (application.status === "pending") status = "pending";
+
+          appliedDate = application.applied_at
+            ? application.applied_at.split("T")[0]
+            : undefined;
+        }
+
+        return {
+          id: match.job_id,
+          title: jobRow.title || "Unknown Title",
+          company: jobRow.company || "Unknown Company",
+          location: jobRow.location || "Location not specified",
+          salary: jobRow.salary || "Salary not specified",
+          type: jobRow.type || "Full-time",
+          postedDate:
+            jobRow.created_at?.split("T")[0] ||
+            new Date().toISOString().split("T")[0],
+          description: jobRow.description || "",
+          requirements: jobRow.requirements
+            ? Array.isArray(jobRow.requirements)
+              ? jobRow.requirements
+              : jobRow.requirements.split("\n")
+            : [],
+          status,
+          appliedDate,
+          matchScore: match.match_score,
+          reason: match.reason,
+          source: jobRow.source || "Job Board",
+          apply_email: jobRow.apply_email,
+          website: jobRow.website,
+        };
+      });
 
       setJobs(transformedJobs);
       setFilteredJobs(transformedJobs);
@@ -161,7 +200,6 @@ export default function Dashboard() {
       applied: jobsData.filter((j) => j.status === "applied").length,
       pending: jobsData.filter((j) => j.status === "pending").length,
       failed: jobsData.filter((j) => j.status === "failed").length,
-      discovered: jobsData.filter((j) => j.status === "discovered").length,
     };
     setStats(newStats);
   };
@@ -240,12 +278,11 @@ export default function Dashboard() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard icon={<BarChart3 />} label="Total" value={stats.total} />
           <StatCard icon={<CheckCircle2 />} label="Applied" value={stats.applied} />
           <StatCard icon={<Clock />} label="Pending" value={stats.pending} />
           <StatCard icon={<AlertCircle />} label="Failed" value={stats.failed} />
-          <StatCard icon={<Settings />} label="Ready" value={stats.discovered} />
         </div>
 
         {/* Filters */}
@@ -263,7 +300,7 @@ export default function Dashboard() {
             className="border rounded px-3 py-2"
           >
             <option value="all">All</option>
-            <option value="discovered">Ready</option>
+            
             <option value="pending">Pending</option>
             <option value="applied">Applied</option>
             <option value="failed">Failed</option>

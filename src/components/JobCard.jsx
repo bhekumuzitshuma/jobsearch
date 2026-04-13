@@ -13,7 +13,7 @@ export default function JobCard({
       case "failed":
         return "Application Failed";
       default:
-        return "Discovered";
+        return "Suggested";
     }
   };
 
