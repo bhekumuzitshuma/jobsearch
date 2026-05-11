@@ -292,12 +292,12 @@ export default function Dashboard() {
             placeholder="Search..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="flex-1 border rounded px-3 py-2"
+            className="flex-1 border text-gray-800 rounded px-3 py-2"
           />
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="border rounded px-3 py-2"
+            className="border rounded px-3 border text-gray-800 py-2"
           >
             <option value="all">All</option>
             
